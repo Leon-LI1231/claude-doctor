@@ -457,6 +457,23 @@ A: 没有升级器（v0.1.0 没有）。后续版本会加 `claude-doctor update
 
 ---
 
+## 更新日志
+
+> 完整 changelog 见 [CHANGELOG.md](CHANGELOG.md)。
+
+### v0.1.0 (2026-06-30) — 首次发布
+
+- ✅ 3 个核心 check：`env` / `settings` / `mcp`
+- ✅ 3 种报告输出：`table` / `json` / `md`
+- ✅ 部署到 `C:\Users\Lenovo\AppData\Local\Programs\claude-doctor\`
+- ✅ 项目根 `E:\claude-doctor\`（独立于 omc-replica）
+- ✅ 推到 GitHub：https://github.com/Leon-LI1231/claude-doctor
+- ✅ 真实机器首次体检：8 PASS / 1 WARN / 0 FAIL
+
+> 设计参考 omc-replica 部署模板（venv + .cmd wrapper + 注册表 PATH），与 omc-replica 完全独立。
+
+---
+
 ## 许可证
 
 MIT
