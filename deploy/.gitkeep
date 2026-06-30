@@ -1,0 +1,2 @@
+# 占位：v0.1.0 不实现离线 wheel 打包脚本。
+# v0.5.0 计划补 prepare-offline.ps1 / bundle-offline.ps1 / install-offline.ps1。
