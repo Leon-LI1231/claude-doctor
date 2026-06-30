@@ -127,4 +127,58 @@ def check() -> list[CheckResult]:
                 {"registry": reg_val, "process": proc_val},
             ))
 
+        # 4) settings vs registry 的一致性 (v1.0 final 新增)
+        # 场景: 两者都设了但不同, 意味着"下次新 cmd 看到的"和"现在 settings 说的"不一致
+        if (set_val is not None and reg_val is not None
+                and set_val != reg_val):
+            results.append(CheckResult(
+                CheckStatus.WARN,
+                f"env.settings_vs_registry.{var}",
+                f"settings.json={_mask(set_val, var)!r} ≠ registry={_mask(reg_val, var)!r} (下次新 cmd 会按 registry 加载, 与 settings 说的不一致)",
+                {"settings": set_val, "registry": reg_val},
+            ))
+
+        # 5) effective_source (v1.0 final 新增)
+        # 明确告诉用户"这个变量实际生效的是哪边的值", 优先级: process > settings > registry > default
+        sources = []
+        if proc_val:
+            sources.append(("process", proc_val))
+        if set_val is not None:
+            sources.append(("settings", set_val))
+        if reg_val is not None:
+            sources.append(("registry", reg_val))
+        # 实际生效值 = sources 第一个非空
+        effective_source = sources[0][0] if sources else "default"
+        effective_value = sources[0][1] if sources else None
+        # 仅在有多个来源或 1 个时输出 (避免空跑)
+        if sources:
+            results.append(CheckResult(
+                CheckStatus.PASS,
+                f"env.effective_source.{var}",
+                f"实际生效: {effective_source}={_mask(effective_value, var)!r} (来源: {' > '.join(s[0] for s in sources)})",
+                {
+                    "effective_source": effective_source,
+                    "effective_value": effective_value,
+                    "sources_count": len(sources),
+                },
+            ))
+
+        # 6) unused_* (v1.0 final 新增) - 某层设了但被更高优层覆盖
+        # 仅当 process 赢且 settings 也设了 (settings 被忽略)
+        if proc_val and set_val is not None and set_val != proc_val:
+            results.append(CheckResult(
+                CheckStatus.PASS,
+                f"env.unused_settings.{var}",
+                f"settings.json 的值 {_mask(set_val, var)!r} 被 process env {_mask(proc_val, var)!r} 覆盖 (按加载顺序 process 赢)",
+                {"unused_value": set_val, "active_value": proc_val},
+            ))
+        # 仅当 settings 赢且 registry 也设了 (registry 被忽略)
+        elif set_val is not None and not proc_val and reg_val is not None and reg_val != set_val:
+            results.append(CheckResult(
+                CheckStatus.PASS,
+                f"env.unused_registry.{var}",
+                f"注册表的值 {_mask(reg_val, var)!r} 被 settings.json {_mask(set_val, var)!r} 覆盖 (settings 优先)",
+                {"unused_value": reg_val, "active_value": set_val},
+            ))
+
     return results
