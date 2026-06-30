@@ -425,18 +425,35 @@ CLAUDE_DOCTOR_HOME=/tmp/test/.claude CLAUDE_DOCTOR_USERJSON=/tmp/test/.claude.js
 
 ---
 
-## v1.0 路线亮点：配置冲突检测
+## v1.0 路线亮点：配置冲突检测 + env 一致性增强
 
 > 已部分实现：在 `feature/v1.0-settings-conflict` 分支开发中。
+> 涉及 `env_check` + `settings_check` + `locator` 三个模块。
 
-`claude-doctor check --only settings` 现在会**自动**多跑一段冲突检测，**不需要新参数**：
+`claude-doctor check` 现在**自动**多了两层检测，**不需要新参数**：
 
-- 自动找项目级 `.claude/settings.json` vs `.claude/settings.local.json`
-- 报告 4 类冲突：
-  - **字符串覆盖冲突**（`model` / `effortLevel` / `outputStyle`）→ WARN
-  - **`permissions.allow` 整段替换风险** → WARN（团队权限可能被悄悄收紧）
-  - **`permissions.deny` 安全策略绕过风险** → **FAIL**（可能绕过团队安全规则）
-  - **JSON 解析失败** → FAIL
+### A. 项目级 settings 冲突检测（`settings` check 段）
+
+自动找项目级 `.claude/settings.json` vs `.claude/settings.local.json`，报告 4 类冲突：
+
+| 规则 | 触发 | 严重度 |
+|---|---|---|
+| `settings.conflict.model` | 两层 `model` 不同 | WARN |
+| `settings.conflict.effortLevel` | 两层 `effortLevel` 不同 | WARN |
+| `settings.conflict.outputStyle` | 两层 `outputStyle` 不同 | WARN |
+| `settings.conflict.permissions.allow` | local 的 allow 数量 < project | WARN（**整段替换风险**）|
+| `settings.conflict.permissions.deny` | local 的 deny 数量 < project | **FAIL**（**安全策略绕过**）|
+| `settings.conflict.<x>_json_valid` | 任一文件 JSON 解析失败 | FAIL |
+
+### B. env 一致性增强（`env` check 段）
+
+从原来"差异检测"升级为"**source of truth 声明**"，新增 3 类规则：
+
+| 规则 | 触发 | 严重度 | 作用 |
+|---|---|---|---|
+| `env.effective_source.<VAR>` | 每个变量 | PASS | 明确说"实际生效 = process=settings=..." |
+| `env.settings_vs_registry.<VAR>` | settings 与 registry 都设了但不同 | WARN | "下次新 cmd 会变" |
+| `env.unused_settings.<VAR>` / `env.unused_registry.<VAR>` | 低优先级被覆盖 | PASS | 提醒"这层配置没用上" |
 
 ### 冲突检测样例
 
@@ -444,16 +461,34 @@ CLAUDE_DOCTOR_HOME=/tmp/test/.claude CLAUDE_DOCTOR_USERJSON=/tmp/test/.claude.js
 $ cd /path/to/your/project
 $ claude-doctor check --only settings
 [OK]   settings.json_valid                  → JSON 合法
-[WARN] settings.permissions.allow           → 6 条规则 (含通配符 5 条)
+[WARN] settings.permissions.allow           → 4 条规则（无通配符）
 [OK]   settings.conflict.scanned            → 扫描 2 层: project + local
 [WARN] settings.conflict.model              → 字符串覆盖冲突: project='sonnet' local='opus' 实际生效='opus' (local 覆盖)
 [FAIL] settings.conflict.permissions.deny   → 安全策略绕过: project 3 条, local 0 条 (整段替换, 3 条 deny 丢失)
+```
+
+```
+$ claude-doctor check --only env
+[OK]   env.process.ANTHROPIC_BASE_URL                已设置: https://api.minimaxi.com/anthropic
+[OK]   env.effective_source.ANTHROPIC_BASE_URL       实际生效: process='https://...' (来源: process > settings > registry)
+[OK]   env.settings_vs_process.ANTHROPIC_BASE_URL    settings.json='https://api.anthropic.com' ≠ process='https://api.minimaxi.com/anthropic' (process 赢)
+[OK]   env.unused_settings.ANTHROPIC_BASE_URL        settings.json 的值 'https://api.anthropic.com' 被 process env 'https://api.minimaxi.com/anthropic' 覆盖
+[WARN] env.settings_vs_registry.ANTHROPIC_BASE_URL   settings.json='https://B' ≠ registry='https://C' (下次新 cmd 会按 registry 加载)
 ```
 
 ### 加载顺序与覆盖语义
 
 按 Claude Code 优先级，**local 永远赢**（深度合并，array 是**整段替换**而非追加）。
 `claude-doctor` 把这种"隐性风险"显式报出来。
+
+### 顺手修的 v0.1.0 bug
+
+- **修复 `is_real_wildcard` 误报**：`Bash(uvx --from office-word-mcp-server word_mcp_server:*)` 之前被误判为通配符（因含 `*`），新逻辑用启发式区分"真通配"和"路径里恰好含 *"，7 个 test case 全过
+- 7 case 验证：4 条真通配 + 1 条精确 + 0 误报
+
+### 已知待修
+
+- v0.6 阶段必修：`CLAUDE_DOCTOR_HOME` env var 语义模糊（mock 时按"home 目录"传，locator 按"已经是 .claude"读），导致所有 v0.1.0 mock 测试从未真正成功过
 
 ---
 
@@ -493,6 +528,22 @@ A: 没有升级器（v0.1.0 没有）。后续版本会加 `claude-doctor update
 ## 更新日志
 
 > 完整 changelog 见 [CHANGELOG.md](CHANGELOG.md)。
+
+### v1.0.0-alpha (2026-06-30) — 在开发中
+
+> 分支：`feature/v1.0-settings-conflict`，未发布。
+
+- ✅ **项目级 settings 冲突检测**（4 类规则）
+  - `settings.conflict.model` / `effortLevel` / `outputStyle` → WARN
+  - `settings.conflict.permissions.allow`（整段替换）→ WARN
+  - `settings.conflict.permissions.deny`（安全策略绕过）→ **FAIL**
+  - `settings.conflict.<x>_json_valid` → FAIL
+- ✅ **`env_check` 升级**：从"差异检测"升级为"source of truth 声明"
+  - `env.effective_source.<VAR>` → PASS（明示实际生效值 + 来源链）
+  - `env.settings_vs_registry.<VAR>` → WARN（settings vs 注册表）
+  - `env.unused_settings.<VAR>` / `env.unused_registry.<VAR>` → PASS（被覆盖的层提示）
+- ✅ **修复 `is_real_wildcard` 误报**：7 case 启发式全过
+- 🚧 已知待修：v0.6 阶段修 `CLAUDE_DOCTOR_HOME` 语义模糊
 
 ### v0.1.0 (2026-06-30) — 首次发布
 
