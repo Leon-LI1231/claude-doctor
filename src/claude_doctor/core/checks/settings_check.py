@@ -20,6 +20,89 @@ from ..types import CheckResult, CheckStatus
 
 
 # ============================================================
+# 工具函数
+# ============================================================
+
+def is_real_wildcard(rule: str) -> bool:
+    """判断 Claude Code 权限规则是否真通配符（而非路径里恰好含 *）。
+
+    启发式:
+      - Bash(*)                                       → 真通配
+      - Bash(<command>:*)                             → 真通配
+      - Bash(<command> <sub>:*)                       → 真通配
+      - Bash(uvx --from <package> <tool>:*)           → 误报, 这是精确路径
+      - Bash(git * log)                               → 真通配 (中间 *)
+      - Bash(git status)                              → 不是
+
+    判断逻辑:
+      1. 如果规则里不含 * → False
+      2. 剥掉 Bash(...) 外壳, 取 :* 之前的内容
+      3. 如果 :* 之前以"空格或字符串开头 + 单词 + 空格或"结尾" → 单词边界 → 真通配
+      4. 如果 :* 之前是复杂路径（包名/文件名）→ 精确路径
+
+    样例:
+        >>> is_real_wildcard("Bash(find:*)")
+        True
+        >>> is_real_wildcard("Bash(uvx --from xxx word_mcp_server:*)")
+        False
+        >>> is_real_wildcard("Bash(git status)")
+        False
+        >>> is_real_wildcard("Bash(git * log)")
+        True
+        >>> is_real_wildcard("Bash(*)")
+        True
+    """
+    if "*" not in rule:
+        return False
+
+    # 剥掉 Bash( ... ) 外壳
+    if rule.startswith("Bash(") and rule.endswith(")"):
+        inner = rule[5:-1]
+    else:
+        inner = rule
+
+    # Case: Bash(*) - 整规则就是 :*
+    if inner == "*":
+        return True
+
+    # Case: Bash(git * log) - * 在中间, 不在 :* 模式
+    #      这种"中间通配"是真通配
+    if ":*" not in inner and "*" in inner:
+        return True
+
+    # Case: Bash(<...>:*) - :* 在末尾
+    # 找最后一个 :* 的位置
+    idx = inner.rfind(":*")
+    if idx == -1:
+        return False  # 含 * 但不匹配以上模式, 保守返回 False
+
+    # :* 之前的内容
+    before = inner[:idx]
+
+    # 启发: 如果 :* 前是"简单命令链" → 真通配
+    # 简单命令链特征:
+    #   - 都是小写字母+短横线+数字 (无下划线多的复杂包名)
+    #   - 不含 --option 形式
+    #   - 段数 <= 3
+    # 复杂路径特征 (精确匹配):
+    #   - 段数 > 3
+    #   - 含 --option 形式 (uvx --from, pip --user 等)
+    #   - 有大量下划线 (包名风格)
+    parts = before.split()
+    has_long_option = any(p.startswith("--") for p in parts)
+    has_complex_token = any(
+        # 复杂 token: 含下划线 OR 连字符超过 1 个 OR 长度 > 15
+        "_" in p or p.count("-") > 1 or len(p) > 15
+        for p in parts
+    )
+    if has_long_option or has_complex_token or len(parts) > 3:
+        # 精确路径
+        return False
+    # 默认: 真通配
+    return True
+
+
+# ============================================================
 # 用户级 settings 检查（v0.1.0 原有逻辑）
 # ============================================================
 
@@ -106,8 +189,8 @@ def _check_user_settings() -> list[CheckResult]:
         deny_set = set(deny)
         conflicts = sorted(allow_set & deny_set)
 
-        # 通配符
-        wildcards = [r for r in allow if "*" in r]
+        # 通配符（用启发式区分真通配 vs 路径里含 *）
+        wildcards = [r for r in allow if is_real_wildcard(r)]
 
         if conflicts:
             results.append(CheckResult(
