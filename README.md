@@ -416,11 +416,44 @@ CLAUDE_DOCTOR_HOME=/tmp/test/.claude CLAUDE_DOCTOR_USERJSON=/tmp/test/.claude.js
 | 版本 | 范围 | 状态 |
 |---|---|---|
 | v0.1.0 | env / settings / mcp 三个核心 check | ✅ 已发布 |
-| v0.2.0 | + permissions / transcript / disk 三个 check | 计划中 |
-| v0.3.0 | + `claude-doctor fix` 自动修复（带确认提示） | 计划中 |
-| v0.4.0 | + MCP server 集成（仿 `omc-replica` 的 mcp_server.py）| 计划中 |
-| v0.5.0 | + 离线 wheel 打包（`prepare-offline.ps1` 等） | 计划中 |
-| v1.0.0 | + 单元测试 + 跨平台 + GitHub release | 计划中 |
+| v0.2.0 | + 交互式 diagnose 模式 | 🚧 开发中（`feature/v0.2-diagnose`）|
+| v0.3.0 | + permissions / transcript / disk 三个 check | 计划中 |
+| v0.4.0 | + MCP server 集成 | 计划中 |
+| v0.5.0 | + 离线 wheel 打包 | 计划中 |
+| v0.6.0 | + pytest 单元测试 + CI | 计划中 |
+| **v1.0.0** | **+ 配置冲突检测（project vs project_local）+ 跨平台 + GitHub release** | 🚧 **本分支** (`feature/v1.0-settings-conflict`) |
+
+---
+
+## v1.0 路线亮点：配置冲突检测
+
+> 已部分实现：在 `feature/v1.0-settings-conflict` 分支开发中。
+
+`claude-doctor check --only settings` 现在会**自动**多跑一段冲突检测，**不需要新参数**：
+
+- 自动找项目级 `.claude/settings.json` vs `.claude/settings.local.json`
+- 报告 4 类冲突：
+  - **字符串覆盖冲突**（`model` / `effortLevel` / `outputStyle`）→ WARN
+  - **`permissions.allow` 整段替换风险** → WARN（团队权限可能被悄悄收紧）
+  - **`permissions.deny` 安全策略绕过风险** → **FAIL**（可能绕过团队安全规则）
+  - **JSON 解析失败** → FAIL
+
+### 冲突检测样例
+
+```
+$ cd /path/to/your/project
+$ claude-doctor check --only settings
+[OK]   settings.json_valid                  → JSON 合法
+[WARN] settings.permissions.allow           → 6 条规则 (含通配符 5 条)
+[OK]   settings.conflict.scanned            → 扫描 2 层: project + local
+[WARN] settings.conflict.model              → 字符串覆盖冲突: project='sonnet' local='opus' 实际生效='opus' (local 覆盖)
+[FAIL] settings.conflict.permissions.deny   → 安全策略绕过: project 3 条, local 0 条 (整段替换, 3 条 deny 丢失)
+```
+
+### 加载顺序与覆盖语义
+
+按 Claude Code 优先级，**local 永远赢**（深度合并，array 是**整段替换**而非追加）。
+`claude-doctor` 把这种"隐性风险"显式报出来。
 
 ---
 
